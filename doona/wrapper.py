@@ -19,16 +19,17 @@
 """Quilt patch handling."""
 
 import errno
+import logging
 import os
 import signal
 import subprocess
-from ... import (
-    trace,
-    )
 
 
 DEFAULT_PATCHES_DIR = 'patches'
 DEFAULT_SERIES_FILE = 'series'
+
+
+logger = logging.getLogger(__name__)
 
 
 class QuiltError(Exception):
@@ -51,7 +52,8 @@ class QuiltNotInstalled(Exception):
 
 
 def run_quilt(
-        args, working_dir, series_file=None, patches_dir=None, quiet=None):
+        args, working_dir, series_file=None, patches_dir=None,
+        quiet: bool = True):
     """Run quilt.
 
     Args:
@@ -76,14 +78,12 @@ def run_quilt(
     else:
         env["QUILT_SERIES"] = DEFAULT_SERIES_FILE
     # Hide output if -q is in use.
-    if quiet is None:
-        quiet = trace.is_quiet()
     if not quiet:
         stderr = subprocess.STDOUT
     else:
         stderr = subprocess.PIPE
     command = ["quilt"] + args
-    trace.mutter("running: %r", command)
+    logger.debug("running: %r", command)
     if not os.path.isdir(working_dir):
         raise AssertionError("%s is not a valid directory" % working_dir)
     try:
@@ -240,11 +240,8 @@ def quilt_unapplied(working_dir, patches_dir=None, series_file=None):
         raise
 
 
-def parse_quilt_series(tree, series_path):
+def parse_quilt_series(f):
     """Find the list of patches.
-
-    Args:
-      tree: Tree to read from
     """
     return [os.fsdecode(patch.rstrip(b"\n")) for patch in f
             if patch.strip() != b""]

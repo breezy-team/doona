@@ -1,5 +1,5 @@
 #    Copyright (C) 2011 Canonical Ltd
-#    Copyright (C) 2019 Jelmer Vernooij <jelmer@jelmer.uk>
+#    Copyright (C) 2019-2021 Jelmer Vernooij <jelmer@jelmer.uk>
 #
 #    Breezy is free software; you can redistribute it and/or modify
 #    it under the terms of the GNU General Public License as published by
@@ -19,21 +19,19 @@
 """Tests for the quilt code."""
 
 import os
+import shutil
+import tempfile
 
-from ..wrapper import (
+from doona.wrapper import (
     quilt_delete,
     quilt_pop_all,
-    quilt_applied,
+    parse_quilt_applied,
     quilt_unapplied,
     quilt_push_all,
-    quilt_series,
+    parse_quilt_series,
     )
 
-from ....tests import TestCaseWithTransport
-from ....tests.features import ExecutableFeature, ModuleAvailableFeature
-
-quilt_feature = ExecutableFeature('quilt')
-doona_feature = ModuleAvailableFeature('doona')
+from unittest import TestCase
 
 TRIVIAL_PATCH = """--- /dev/null	2012-01-02 01:09:10.986490031 +0100
 +++ base/a	2012-01-02 20:03:59.710666215 +0100
@@ -41,31 +39,41 @@ TRIVIAL_PATCH = """--- /dev/null	2012-01-02 01:09:10.986490031 +0100
 +a
 """
 
-class QuiltTests(TestCaseWithTransport):
+class QuiltTests(TestCase):
 
-    _test_needs_features = [quilt_feature, doona_feature]
+    def setUp(self):
+        super(QuiltTests, self).setUp()
+        td = tempfile.mkdtemp()
+        self.addCleanup(os.chdir, os.getcwd())
+        os.chdir(td)
+        self.addCleanup(shutil.rmtree, td)
 
     def make_empty_quilt_dir(self, path):
-        source = self.make_branch_and_tree(path)
-        self.build_tree(
-            [os.path.join(path, n) for n in ['patches/']])
-        self.build_tree_contents([
-            (os.path.join(path, "patches/series"), "\n")])
-        source.add(["patches", "patches/series"])
-        return source
+        os.mkdir(path)
+        os.mkdir(os.path.join(path, 'patches/'))
+        with open(os.path.join(path, "patches/series"), 'w') as f:
+            f.write("\n")
+
+    def build_tree_contents(self, contents):
+        for e in contents:
+            if e[0].endswith('/'):
+                os.mkdir(e[0])
+            else:
+                with open(e[0], 'w') as f:
+                    f.write(e[1])
 
     def test_series_all_empty(self):
-        source = self.make_empty_quilt_dir("source")
-        self.assertEquals([], quilt_series(source, 'patches/series'))
+        self.make_empty_quilt_dir("source")
+        with open('source/patches/series', 'rb') as f:
+            self.assertEqual([], parse_quilt_series(f))
 
     def test_series_all(self):
-        source = self.make_empty_quilt_dir("source")
+        self.make_empty_quilt_dir("source")
         self.build_tree_contents([
             ("source/patches/series", "patch1.diff\n"),
             ("source/patches/patch1.diff", TRIVIAL_PATCH)])
-        source.smart_add(["source"])
-        self.assertEquals(
-            ["patch1.diff"], quilt_series(source, 'patches/series'))
+        with open('source/patches/series', 'rb') as f:
+            self.assertEqual(["patch1.diff"], parse_quilt_series(f))
 
     def test_push_all_empty(self):
         self.make_empty_quilt_dir("source")
@@ -76,18 +84,18 @@ class QuiltTests(TestCaseWithTransport):
         quilt_pop_all("source", quiet=True)
 
     def test_applied_empty(self):
-        source = self.make_empty_quilt_dir("source")
+        self.make_empty_quilt_dir("source")
         self.build_tree_contents([
             ("source/patches/series", "patch1.diff\n"),
             ("source/patches/patch1.diff", "foob ar")])
-        self.assertEquals([], quilt_applied(source))
+        self.assertFalse(os.path.exists('.pc/applied-patches'))
 
     def test_unapplied(self):
         self.make_empty_quilt_dir("source")
         self.build_tree_contents([
             ("source/patches/series", "patch1.diff\n"),
             ("source/patches/patch1.diff", "foob ar")])
-        self.assertEquals(["patch1.diff"], quilt_unapplied("source"))
+        self.assertEqual(["patch1.diff"], quilt_unapplied("source"))
 
     def test_unapplied_dir(self):
         self.make_empty_quilt_dir("source")
@@ -95,7 +103,7 @@ class QuiltTests(TestCaseWithTransport):
             ("source/patches/series", "debian/patch1.diff\n"),
             ("source/patches/debian/", ),
             ("source/patches/debian/patch1.diff", "foob ar")])
-        self.assertEquals(["debian/patch1.diff"], quilt_unapplied("source"))
+        self.assertEqual(["debian/patch1.diff"], quilt_unapplied("source"))
 
     def test_unapplied_multi(self):
         self.make_empty_quilt_dir("source")
@@ -103,20 +111,20 @@ class QuiltTests(TestCaseWithTransport):
             ("source/patches/series", "patch1.diff\npatch2.diff"),
             ("source/patches/patch1.diff", "foob ar"),
             ("source/patches/patch2.diff", "bazb ar")])
-        self.assertEquals(["patch1.diff", "patch2.diff"],
+        self.assertEqual(["patch1.diff", "patch2.diff"],
                           quilt_unapplied("source", "patches"))
 
     def test_delete(self):
-        source = self.make_empty_quilt_dir("source")
+        self.make_empty_quilt_dir("source")
         self.build_tree_contents([
             ("source/patches/series", "patch1.diff\npatch2.diff"),
             ("source/patches/patch1.diff", "foob ar"),
             ("source/patches/patch2.diff", "bazb ar")])
         quilt_delete("source", "patch1.diff", "patches", remove=False)
-        self.assertEqual(
-            ['patch2.diff'],
-            quilt_series(source, 'patches/series'))
+        with open('source/patches/series', 'rb') as f:
+            self.assertEqual(['patch2.diff'], parse_quilt_series(f))
         quilt_delete("source", "patch2.diff", "patches", remove=True)
         self.assertTrue(os.path.exists('source/patches/patch1.diff'))
         self.assertFalse(os.path.exists('source/patches/patch2.diff'))
-        self.assertEqual([], quilt_series(source, 'patches/series'))
+        with open('source/patches/series', 'rb') as f:
+            self.assertEqual([], parse_quilt_series(f))
